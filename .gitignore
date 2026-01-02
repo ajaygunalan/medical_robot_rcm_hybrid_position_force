@@ -1,0 +1,15 @@
+# Virtual environment
+drake-env/
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude
+.claude/
+
+# Debug screenshots
+*.png

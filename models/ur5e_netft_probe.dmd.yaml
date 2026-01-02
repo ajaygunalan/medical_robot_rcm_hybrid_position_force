@@ -1,0 +1,29 @@
+directives:
+# UR5e Robot (welded to world via base_joint in URDF)
+- add_model:
+    name: ur5e
+    file: package://ur5e_description/ur5e.urdf
+    # Home position: upright pose with elbow bent (avoids singularity & table collision)
+    # [base, shoulder, elbow, wrist1, wrist2, wrist3] in radians
+    default_joint_positions:
+        shoulder_pan_joint: [0.0]
+        shoulder_lift_joint: [-1.5708]    # -90 deg
+        elbow_joint: [1.5708]              # +90 deg
+        wrist_1_joint: [-1.5708]           # -90 deg
+        wrist_2_joint: [-1.5708]           # -90 deg
+        wrist_3_joint: [0.0]
+
+# NetFT + Probe End-Effector
+- add_model:
+    name: netft_probe
+    file: package://ur5e_description/netft_probe.urdf
+
+# Weld end-effector to robot flange
+# X_PC rotation matches flange→tool0 transform so end-effector Z+ points outward
+# Translation along flange Z-axis to close gap (adjust as needed)
+- add_weld:
+    parent: ur5e::flange
+    child: netft_probe::netft_link
+    X_PC:
+        translation: [-0.01, 0.0, 0.00]
+        rotation: !Rpy { deg: [90, 0, 90] }
