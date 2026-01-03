@@ -125,16 +125,24 @@ Your context window will be automatically compacted as it approaches its limit, 
 
 | Tool | Purpose | Use When |
 |------|---------|----------|
-| `web_search_exa` | Web search → URLs | Finding official docs, broad discovery |
-| `get_code_context_exa` | Code snippets | "How do I...?" questions, API patterns |
-| `ref_search_documentation` | GitHub/private docs | Searching repos, indexed private docs |
-| `ref_read_url` | Read URL → markdown | **Always use this** to read URLs (not WebFetch) |
+| `ref_search_documentation` | Search indexed private repos | **First choice** for Drake, manipulation, ur_rtde |
+| `ref_read_url` | Read any URL → markdown | **Always use this** to read URLs (not WebFetch) |
+| `web_search_exa` | Discover new sources | Finding URLs not in indexed repos |
+| `get_code_context_exa` | Code snippets from web | "How do I...?" questions, API patterns |
 
 **Decision Flow:**
-1. Need working code? → `get_code_context_exa` first
-2. Need official docs? → `web_search_exa` to find URL
-3. Found a URL? → `ref_read_url` to read it
-4. Searching GitHub specifically? → `ref_search_documentation`
+1. **Indexed library?** (Drake, manipulation, ur_rtde) → `ref_search_documentation` first (fastest)
+2. **Need external sources?** → `web_search_exa` to discover URLs
+3. **Have a URL?** → `ref_read_url` to read it (works for any URL)
+4. **Need code patterns?** → `get_code_context_exa` for snippets
+
+**Two-Tool Pattern for Research:**
+```
+# Step 1: Find sources with Exa
+web_search_exa("Drake trajectory generation trapezoidal")
+# Step 2: Read the URL with Ref
+ref_read_url("https://drake.mit.edu/...")
+```
 
 **Skip searches for:** generic libraries (numpy, matplotlib, pandas, IPython), self-documenting errors, simple syntax. Save MCP calls for domain-specific queries (pydrake, manipulation, ur_rtde).
 
@@ -165,3 +173,50 @@ Domain-specific repos indexed for fast doc access:
 | `ajaygunalan-external-library/drake` | Robotics simulation | `drake pydrake ref_src=private` |
 | `ajaygunalan-external-library/manipulation` | MIT manipulation | `manipulation ref_src=private` |
 | `ajayexternlib/ur_rtde` | UR5e hardware control | `ur_rtde speedJ ref_src=private` |
+
+## Prompting External AI (Gemini DeepThink, ChatGPT Pro)
+
+When user asks for a prompt for external reasoning models:
+
+**Core Principles:**
+1. **Never paste code** - Files are attached separately
+2. **Describe files briefly** - Table format: `| File | Description |`
+3. **Be specific** - Concrete questions, not vague "review this"
+4. **Reference continuity** - In follow-ups, mention previous discussion
+5. **Request structured output** - Tables, checklists, numbered lists
+
+**Prompt Structure:**
+```
+## Context
+[1-2 sentences: problem, goal, current phase]
+
+## Files Attached
+| File | Description |
+|------|-------------|
+| foo.py | Does X |
+| bar.md | Documents Y |
+
+## Questions
+1. Specific question?
+2. Another specific question?
+```
+
+**Multi-Turn Follow-up:**
+```
+## Context (Continuing)
+[1 sentence: what changed since last prompt]
+
+## Updated Files
+| File | What changed |
+|------|--------------|
+| foo.py | Implemented X |
+
+## Questions
+1. Does implementation match design?
+2. Any issues before next phase?
+```
+
+**Anti-Patterns:**
+- Don't paste code → Attach files, describe in table
+- Don't say "review this" → Ask specific questions
+- Don't repeat file contents → Reference: "See DESIGN.md Section 3"

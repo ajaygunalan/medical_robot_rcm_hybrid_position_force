@@ -2,12 +2,19 @@
 RCM Hybrid Controller Demos
 ===========================
 Usage:
-    python demo.py                              # RCM pivoting (no tissue)
-    python demo.py --tissue vaginal             # RCM pivoting + vaginal tissue
-    python demo.py --mode rcm_and_force         # RCM + force control (no tissue)
-    python demo.py --mode rcm_and_force --tissue flat
-    python demo.py --check                      # Position trocar interactively
-    python demo.py --check --tissue flat        # Position trocar + tissue
+    # Simulation
+    python demo.py --sim                            # RCM pivoting (no tissue)
+    python demo.py --sim --tissue vaginal           # RCM pivoting + vaginal tissue
+    python demo.py --sim --mode rcm_and_force       # RCM + force control (no tissue)
+    python demo.py --sim --mode rcm_and_force --tissue flat
+
+    # Hardware (same code, different flag)
+    python demo.py --hardware --ip 192.168.1.1      # RCM pivoting on real robot
+    python demo.py --hardware --ip 192.168.1.1 --tissue vaginal
+
+    # Interactive trocar positioning
+    python demo.py --check                          # Position trocar interactively
+    python demo.py --check --tissue flat            # Position trocar + tissue
 """
 import sys
 import argparse
@@ -35,12 +42,12 @@ from pydrake.geometry import (
 )
 from pydrake.multibody.plant import CoulombFriction, ContactModel
 from controller import rcm_step, solve_rcm_qp, compute_rcm_error, compute_jacobians
-from driver.ur5e_driver import UR5E_PACKAGE_XML
+from driver.ur5e_driver import UR5eDriver, UR5E_PACKAGE_XML
 
 # --- CONFIGURATION ---
 FORCE_TARGET = 5.0      # Newtons
 K_FORCE = 0.005         # Admittance gain (m/s per N)
-DT = 0.001
+DT = 0.01               # Control loop dt for RCM mode
 
 POSES = {
     "vaginal": {"p": [0.4919, 0.1723, 0.3458], "rpy": [-2.5160, 1.5708, -0.9452]},
@@ -76,32 +83,40 @@ def get_pivoting_twist(t, trocar_pos, tcp_pos, include_roll=True):
     return np.concatenate([omega, v])
 
 
+def add_tissue_visualization(meshcat, plant, plant_ctx, tissue_type):
+    """Add tissue mesh to Meshcat visualization (visual only, no collision)."""
+    tcp_frame = plant.GetFrameByName("tcp")
+    world = plant.world_frame()
+    X_W_TCP = plant.CalcRelativeTransform(plant_ctx, world, tcp_frame)
+
+    if tissue_type == "flat":
+        tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "flat" / "flat_tissue.obj")
+        X_TCP_Tissue = RigidTransform(RollPitchYaw(0, 0, 0), [0, 0, POSES["flat"]["offset_z"]])
+        tissue_pose = X_W_TCP.multiply(X_TCP_Tissue)
+    else:
+        tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "vaginal" / "vagina_tissue.obj")
+        tissue_pose = RigidTransform(RollPitchYaw(POSES["vaginal"]["rpy"]), POSES["vaginal"]["p"])
+
+    meshcat.SetObject("tissue", Mesh(tissue_obj_path, scale=1.0), Rgba(0.1, 0.2, 0.6, 0.7))
+    meshcat.SetTransform("tissue", tissue_pose)
+
+
 # =============================================================================
-# RCM MODE (from rcm_demo.py)
+# RCM MODE - Uses UR5eDriver (works on sim AND hardware)
 # =============================================================================
 
-def run_rcm(tissue_type=None):
-    """Pure RCM pivoting demo - optional tissue visualization, no force control."""
-    builder = DiagramBuilder()
-    plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=0.0)
-    parser = Parser(plant)
-    parser.package_map().AddPackageXml(UR5E_PACKAGE_XML)
-    parser.AddModelsFromUrl("package://ur5e_description/ur5e_netft_probe.dmd.yaml")
-    plant.Finalize()
-
-    meshcat = StartMeshcat()
-    MeshcatVisualizer.AddToBuilder(builder, scene_graph, meshcat)
-    diagram = builder.Build()
-
-    ctx = diagram.CreateDefaultContext()
-    plant_ctx = plant.GetMyContextFromRoot(ctx)
-    q = plant.GetPositions(plant_ctx)
+def run_rcm(hardware=False, robot_ip=None, tissue_type=None):
+    """Pure RCM pivoting demo - uses UR5eDriver for unified sim/hardware."""
+    driver = UR5eDriver(hardware=hardware, robot_ip=robot_ip)
+    plant, plant_ctx = driver.get_plant_context()
+    meshcat = driver.meshcat
 
     # Trocar position
-    p_trocar_in_probe = np.array([0.0, 0.005, 0.06])
     probe_link = plant.GetFrameByName("transvaginal_probe_link")
     tcp_frame = plant.GetFrameByName("tcp")
     world = plant.world_frame()
+
+    p_trocar_in_probe = np.array([0.0, 0.005, 0.06])
     X_W_Probe = plant.CalcRelativeTransform(plant_ctx, world, probe_link)
     trocar_pos_world = X_W_Probe.multiply(p_trocar_in_probe)
 
@@ -110,47 +125,38 @@ def run_rcm(tissue_type=None):
 
     # Add tissue visualization if specified
     if tissue_type:
-        X_W_TCP = plant.CalcRelativeTransform(plant_ctx, world, tcp_frame)
-        if tissue_type == "flat":
-            tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "flat" / "flat_tissue.obj")
-            X_TCP_Tissue = RigidTransform(RollPitchYaw(0, 0, 0), [0, 0, POSES["flat"]["offset_z"]])
-            tissue_pose = X_W_TCP.multiply(X_TCP_Tissue)
-        else:
-            tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "vaginal" / "vagina_tissue.obj")
-            tissue_pose = RigidTransform(RollPitchYaw(POSES["vaginal"]["rpy"]), POSES["vaginal"]["p"])
-        meshcat.SetObject("tissue", Mesh(tissue_obj_path, scale=1.0), Rgba(0.1, 0.2, 0.6, 0.7))  # Dark blue
-        meshcat.SetTransform("tissue", tissue_pose)
+        add_tissue_visualization(meshcat, plant, plant_ctx, tissue_type)
 
-    diagram.ForcedPublish(ctx)
-
+    mode_str = "HARDWARE" if hardware else "SIMULATION"
     tissue_str = tissue_type if tissue_type else "no tissue"
-    print(f"--- RCM Pivoting Demo ({tissue_str}) ---")
-    print(f"Trocar: {p_trocar_in_probe}")
+    print(f"--- RCM Pivoting Demo ({mode_str}, {tissue_str}) ---")
+    print(f"Trocar (probe frame): {p_trocar_in_probe}")
     print(f"Meshcat: {meshcat.web_url()}")
     input("Press Enter to start...")
 
     t = 0.0
     try:
         while True:
-            tcp = plant.GetFrameByName("tcp")
-            plant.SetPositions(plant_ctx, q)
-            X_W_TCP = plant.CalcRelativeTransform(plant_ctx, world, tcp)
+            q, _ = driver.get_state()
 
+            X_W_TCP = plant.CalcRelativeTransform(plant_ctx, world, tcp_frame)
             V_des = get_pivoting_twist(t, trocar_pos_world, X_W_TCP.translation(), include_roll=False)
+
             v_opt = rcm_step(plant, plant_ctx, q, trocar_pos_world, V_des,
                              shaft_frame="transvaginal_probe_link")
 
-            q = q + v_opt * 0.01
-            plant.SetPositions(plant_ctx, q)
-            diagram.ForcedPublish(ctx)
-            t += 0.01
-            time.sleep(0.01)
+            driver.send_velocity(v_opt)
+            driver.step(dt=DT)
+            t += DT
+
     except KeyboardInterrupt:
         print("\nStopped.")
+    finally:
+        driver.stop()
 
 
 # =============================================================================
-# HYBRID FORCE MODE (from rcm_force_control.py)
+# HYBRID FORCE MODE - Uses Drake Simulator (simulation only, needs contact physics)
 # =============================================================================
 
 class RcmHybridController(LeafSystem):
@@ -252,7 +258,7 @@ class ForceVisualizer(LeafSystem):
 
 
 def run_hybrid_force(tissue_type=None):
-    """RCM + hybrid force/position control. tissue_type=None means no tissue (0N force)."""
+    """RCM + hybrid force/position control. Simulation only (needs contact physics)."""
     # First pass: get TCP pose for tissue placement (if needed)
     tissue_pose = None
     tissue_obj_path = None
@@ -285,11 +291,10 @@ def run_hybrid_force(tissue_type=None):
     parser.AddModelsFromUrl("package://ur5e_description/ur5e_netft_probe.dmd.yaml")
 
     if tissue_type:
-        # Visual geometry - original OBJ
-        plant.RegisterVisualGeometry(plant.world_body(), tissue_pose, Mesh(tissue_obj_path, scale=1.0), "tissue_vis", [0.1, 0.2, 0.6, 1.0])  # Dark blue
+        # Visual geometry
+        plant.RegisterVisualGeometry(plant.world_body(), tissue_pose, Mesh(tissue_obj_path, scale=1.0), "tissue_vis", [0.1, 0.2, 0.6, 1.0])
 
-        # Collision geometry - RIGID hydroelastic preserves OBJ surface exactly
-        # Probe is compliant, so rigid tissue + compliant probe = contact works
+        # Collision geometry - RIGID hydroelastic
         tissue_props = ProximityProperties()
         AddRigidHydroelasticProperties(properties=tissue_props)
         AddContactMaterial(
@@ -342,7 +347,7 @@ def run_hybrid_force(tissue_type=None):
 
     diagram.ForcedPublish(sim_ctx)
     tissue_str = tissue_type if tissue_type else "no tissue"
-    print(f"--- RCM + Force Control ({tissue_str}) ---")
+    print(f"--- RCM + Force Control (SIMULATION, {tissue_str}) ---")
     print(f"Target Force: {FORCE_TARGET}N")
     print(f"Meshcat: {meshcat.web_url()}")
     input("Press Enter to start simulation...")
@@ -356,7 +361,7 @@ def run_hybrid_force(tissue_type=None):
 
 
 # =============================================================================
-# CHECK MODE (from check_trocar.py and check_trocar_tissue.py)
+# CHECK MODE
 # =============================================================================
 
 def run_check(tissue_type=None):
@@ -398,7 +403,7 @@ def run_check(tissue_type=None):
             tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "flat" / "flat_tissue.obj")
         else:
             tissue_obj_path = str(Path(__file__).parent.parent / "models" / "tissue" / "vaginal" / "vagina_tissue.obj")
-        meshcat.SetObject("tissue", Mesh(tissue_obj_path, scale=1.0), Rgba(0.1, 0.2, 0.6, 0.7))  # Dark blue
+        meshcat.SetObject("tissue", Mesh(tissue_obj_path, scale=1.0), Rgba(0.1, 0.2, 0.6, 0.7))
 
     diagram.ForcedPublish(context)
 
@@ -458,27 +463,45 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python demo.py                                    # RCM pivoting (no tissue)
-  python demo.py --tissue vaginal                   # RCM pivoting + vaginal tissue
-  python demo.py --mode rcm_and_force               # RCM + force (no tissue, 0N)
-  python demo.py --mode rcm_and_force --tissue flat # RCM + force + flat tissue
+  # Simulation
+  python demo.py --sim                              # RCM pivoting (no tissue)
+  python demo.py --sim --tissue vaginal             # RCM pivoting + vaginal tissue
+  python demo.py --sim --mode rcm_and_force         # RCM + force (simulation only)
+  python demo.py --sim --mode rcm_and_force --tissue flat
+
+  # Hardware
+  python demo.py --hardware --ip 192.168.1.1        # RCM pivoting on real robot
+  python demo.py --hardware --ip 192.168.1.1 --tissue vaginal
+
+  # Interactive positioning
   python demo.py --check                            # Position trocar only
   python demo.py --check --tissue flat              # Position trocar + tissue
         """
     )
 
+    # Mode selection
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--sim", action="store_true", help="Simulation mode")
+    mode_group.add_argument("--hardware", action="store_true", help="Hardware mode")
+    mode_group.add_argument("--check", action="store_true", help="Interactive position check")
+
+    parser.add_argument("--ip", type=str, help="Robot IP (required for --hardware)")
     parser.add_argument("--mode", choices=["rcm", "rcm_and_force"], default="rcm",
                         help="Control mode (default: rcm)")
     parser.add_argument("--tissue", choices=["flat", "vaginal"], default=None,
-                        help="Tissue type (optional). If not specified, no tissue is loaded")
-    parser.add_argument("--check", action="store_true",
-                        help="Run interactive position check utility")
+                        help="Tissue type (optional)")
 
     args = parser.parse_args()
+
+    if args.hardware and not args.ip:
+        parser.error("--ip required for --hardware")
+
+    if args.hardware and args.mode == "rcm_and_force":
+        parser.error("--mode rcm_and_force only available in simulation (needs contact physics)")
 
     if args.check:
         run_check(args.tissue)
     elif args.mode == "rcm":
-        run_rcm(args.tissue)
+        run_rcm(hardware=args.hardware, robot_ip=args.ip, tissue_type=args.tissue)
     elif args.mode == "rcm_and_force":
         run_hybrid_force(args.tissue)
