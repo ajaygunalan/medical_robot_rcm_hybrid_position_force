@@ -211,8 +211,11 @@ Examples:
         run_interactive(driver)
     except KeyboardInterrupt:
         print("\nInterrupted")
+    except RuntimeError as e:
+        print(f"\nRobot error: {e}")
     finally:
         driver.stop()
+        print("Stopped.")
 
 
 if __name__ == "__main__":

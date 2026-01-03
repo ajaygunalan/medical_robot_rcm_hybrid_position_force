@@ -100,22 +100,27 @@ driver = builder.AddSystem(UR5eDriver(robot_ip="192.168.1.102"))
 
 ## Commit Messages
 
-High-level, 2-3 lines max:
-```
-<What you did in one line>
+Numbered list. What we did. No fluff.
 
-<Why/how in 1-2 short sentences>
+```
+1. <What changed>
+2. <What's verified>
+3. <Why it works>
 ```
 
 Example:
 ```
-Refactor UR5e to match IIWA textbook pattern
-
-Use LoadScenario + MakeHardwareStation like IIWA examples.
-Simplify driver from 100 to 45 lines.
+1. Fixed ur_rtde import compatibility (library v1.6+ changed API)
+2. Tested in simulation - smooth motion, no velocity spikes
+3. Feedforward from pre-planned trajectory replaces reactive P-control
 ```
 
-No bullet lists. No file-by-file details. Just the essence.
+## Code Style
+
+- **No defensive programming** - Don't wrap everything in try/except. Check state once, fail cleanly.
+- **Minimalistic** - Less code is better. Reuse existing resources.
+- **Clean exit on errors** - Print clear message, exit gracefully. No ugly tracebacks.
+- **Avoid bloat** - No unnecessary abstractions, no "just in case" code.
 
 ## Context Awareness
 

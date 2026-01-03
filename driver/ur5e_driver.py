@@ -35,7 +35,8 @@ from pydrake.all import (
 UR5E_PACKAGE_XML = str(Path(__file__).parent.parent / 'models' / 'package.xml')
 
 try:
-    from ur_rtde import RTDEControlInterface, RTDEReceiveInterface
+    import rtde_control
+    import rtde_receive
     _UR_RTDE_AVAILABLE = True
 except ImportError:
     _UR_RTDE_AVAILABLE = False
@@ -77,9 +78,8 @@ class UR5eDriver:
                 raise ImportError("ur_rtde not installed. Run: pip install ur-rtde")
             if robot_ip is None:
                 raise ValueError("robot_ip required for hardware mode")
-            self._rtde_c = RTDEControlInterface(robot_ip)
-            self._rtde_r = RTDEReceiveInterface(robot_ip)
-            self._rtde_c.initPeriod()
+            self._rtde_c = rtde_control.RTDEControlInterface(robot_ip)
+            self._rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
 
         # Internal Drake plant (Digital Twin)
         self._builder = DiagramBuilder()
@@ -165,7 +165,7 @@ class UR5eDriver:
         dt = dt if dt is not None else self._dt
 
         if self._hardware:
-            self._rtde_c.waitPeriod()
+            time.sleep(dt)
         else:
             # Kinematic integration for simulation
             self._q = self._q + self._v_cmd * dt
@@ -183,8 +183,11 @@ class UR5eDriver:
         self._v_cmd = np.zeros(6)
 
         if self._hardware and self._rtde_c:
-            self._rtde_c.speedStop(0.5)
-            self._rtde_c.stopScript()
+            try:
+                self._rtde_c.speedStop(0.5)
+                self._rtde_c.stopScript()
+            except:
+                pass  # Already disconnected
 
     def get_plant_context(self) -> Tuple[MultibodyPlant, Context]:
         """Returns (plant, context) for Jacobian computation.

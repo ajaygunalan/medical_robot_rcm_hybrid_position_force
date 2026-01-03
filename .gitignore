@@ -1,4 +1,5 @@
 # Virtual environment
+rcm_force_drake_env/
 drake-env/
 
 # Python
